@@ -1,34 +1,59 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+import database as db
 
 app = FastAPI()
 
 class NoteCreate(BaseModel):
     text: str
 
-id = 1
-notes = {}
+weaviate_client = db.get_weaviate_client()
+db.create_notes_collection(weaviate_client)
+
+note_counter = 1
 
 @app.post("/notes")
 async def create_note(note: NoteCreate):
-    global id
-    note_id = id
-    new_note = {
-        "id": note_id,
-        "text": note.text
-    }
-    notes[note_id] = new_note
-    id += 1
-    return new_note
+    global note_counter
+    note_id = note_counter
+    try:
+        db.add_note(weaviate_client, note_id, note.text)
+        note_counter += 1
+        return {
+            "id": note_id,
+            "text": note.text,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating note: {str(e)}")
 
-@app.get("/notes/get_all_notes")
-async def print_all_notes():
+@app.get("/notes/all")
+async def get_notes():
+    notes = db.get_all_notes(weaviate_client)
     return notes
 
 @app.get("/notes/{note_id}")
-async def read_note(note_id: int):
-    if note_id not in notes:
-        return "Error, note not found"
-    else:
-        return notes[note_id]
+async def read_note_by_id(note_id: int):
+    note = db.get_note_by_id(weaviate_client, note_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return note
+
+@app.get("/search")
+async def search_notes(q: str):
+    try:
+        results = db.search_notes(weaviate_client, q)
+        return {
+            "query": q,
+            "results": results,
+            "count": len(results)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error searching notes: {str(e)}")
     
+@app.delete("/notes/{note_id}")
+async def delete_note(note_id: int):
+    result = db.delete_note_by_id(weaviate_client, note_id)
+    if result is True:
+        return "Note deleted successfully"
+    else:
+        raise HTTPException(status_code=404, detail="Note not found")
